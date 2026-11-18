@@ -180,6 +180,18 @@ input[type=text],input[type=number],input[type=search],input[type=date]{font:inh
 .metas td,.metas th{padding:5px 8px}
 .metas input{width:84px}
 
+/* CO2 por unidad */
+.seg{display:inline-flex;gap:4px;flex-wrap:nowrap;flex-shrink:0}
+.seg button{padding:5px 12px;border-radius:999px}
+.seg button[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+table.co2 th,table.co2 td{padding:6px 8px}
+table.co2 td.v{text-align:right;white-space:nowrap;background:color-mix(in srgb,var(--series) var(--w,0%),transparent)}
+table.co2 td.v.z{color:var(--muted)}
+table.co2 thead th{text-align:right}
+table.co2 thead th:first-child{text-align:left}
+table.co2 th:first-child,table.co2 td:first-child{position:sticky;left:0;background:var(--surface);z-index:1}
+table.co2 tr.tot td:first-child{background:var(--sunken)}
+table.co2 td.tc,table.co2 th.tc{border-left:1px solid var(--axis)}
 .tabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--axis)}
 .tabs button{border:0;border-bottom:3px solid transparent;border-radius:0;background:none;padding:9px 14px 8px;color:var(--ink-2);font-weight:500;margin-bottom:-1px}
 .tabs button:hover{color:var(--ink)}
@@ -227,12 +239,14 @@ input[type=text],input[type=number],input[type=search],input[type=date]{font:inh
     <button type="button" role="tab" data-view="fic">Fichas</button>
     <button type="button" role="tab" data-view="dia">Día a día</button>
     <button type="button" role="tab" data-view="cho">Choferes</button>
+    <button type="button" role="tab" data-view="co2">CO₂ por unidad</button>
   </nav>
 
   <div class="view" id="vRes" hidden></div>
   <div class="view" id="vFic" hidden></div>
   <div class="view" id="vDia" hidden></div>
   <div class="view" id="vCho" hidden></div>
+  <div class="view" id="vCo2" hidden></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -244,7 +258,7 @@ var CACHE='rendimiento-bvr.v1', UIK='rendimiento-bvr.ui';
 
 function defCfg(){ return {banda:5, co2:9.88, minG:0}; }
 /* S: lo que viene de la base (fichas, cargas, asign) + estado de la vista. */
-var S={fichas:{}, cargas:[], asign:{}, cfg:defCfg(), datos:null, ym:null, view:'res', ficSort:['extra',-1], choSort:['extra',-1], open:{}, sel:null, q:''};
+var S={fichas:{}, cargas:[], asign:{}, cfg:defCfg(), datos:null, ym:null, view:'res', ficSort:['extra',-1], choSort:['extra',-1], open:{}, sel:null, q:'', co2g:'m'};
 
 /* ---------- Utilidades ---------- */
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -419,16 +433,16 @@ function render(){
   document.getElementById('empty').hidden=has;
   document.getElementById('tabs').hidden=!has;
   var sel=document.getElementById('monthSel'); sel.hidden=!has;
-  if(!has){ ['vRes','vFic','vDia','vCho'].forEach(function(v){ document.getElementById(v).hidden=true; }); return; }
+  if(!has){ ['vRes','vFic','vDia','vCho','vCo2'].forEach(function(v){ document.getElementById(v).hidden=true; }); return; }
   if(!S.ym||(S.ym!=='Y'&&ms.indexOf(S.ym)<0)) S.ym=ms[ms.length-1];
   sel.innerHTML=ms.slice().reverse().map(function(m){ return '<option value="'+m+'"'+(m===S.ym?' selected':'')+'>'+ymName(m)+'</option>'; }).join('')+'<option value="Y"'+(S.ym==='Y'?' selected':'')+'>Año '+yearOf()+' completo</option>';
   var dt=S.datos; document.getElementById('subtitle').textContent='Kilómetros por galón por camión, día y chofer, contra la meta de cada ficha.'+(dt&&dt.archivo?' Datos de "'+dt.archivo+'"'+(dt.cargado?', cargado el '+fDate(String(dt.cargado).slice(0,10))+'.':'.'):'');
   document.querySelectorAll('#tabs button').forEach(function(b){ b.setAttribute('aria-selected', b.dataset.view===S.view?'true':'false'); });
-  var map={res:'vRes', fic:'vFic', dia:'vDia', cho:'vCho'};
+  var map={res:'vRes', fic:'vFic', dia:'vDia', cho:'vCho', co2:'vCo2'};
   Object.keys(map).forEach(function(k){ document.getElementById(map[k]).hidden=k!==S.view; });
-  ({res:vRes, fic:vFic, dia:vDia, cho:vCho})[S.view]();
+  ({res:vRes, fic:vFic, dia:vDia, cho:vCho, co2:vCo2})[S.view]();
   if(!document.getElementById('editor').hidden) renderEditor();
-  try{ localStorage.setItem(UIK, JSON.stringify({view:S.view})); }catch(_){}
+  try{ localStorage.setItem(UIK, JSON.stringify({view:S.view, co2g:S.co2g})); }catch(_){}
 }
 function chip(s,t){ return '<span class="chip s-'+s+'"><i>'+({good:'✓',warn:'!',crit:'✕',none:'–'})[s]+'</i>'+t+'</span>'; }
 function rs(rend,meta){ return '<span class="rs s-'+st(rend,meta)+'">'+f1(rend)+'</span>'; }
@@ -558,6 +572,51 @@ function vCho(){
   var qi=document.getElementById('qCho'); if(qi&&vCho.focus){ qi.focus(); qi.setSelectionRange(qi.value.length,qi.value.length); vCho.focus=false; }
 }
 
+/* --- CO2 por unidad ---
+   CO2 = galones cargados × factor (kg por galón, en Reglas). Se cuenta el día de la carga de combustible.
+   Diario: días del mes elegido. Semanal: semanas de lunes a domingo del año. Mensual: meses del año. */
+function lunesDe(f){ var d=new Date(f+'T12:00:00Z'), w=(d.getUTCDay()+6)%7; d.setUTCDate(d.getUTCDate()-w); return d.toISOString().slice(0,10); }
+function semanaNum(lun){ var d=new Date(lun+'T12:00:00Z'); d.setUTCDate(d.getUTCDate()+3); var y0=new Date(Date.UTC(d.getUTCFullYear(),0,1,12)); return 1+Math.floor((d-y0)/864e5/7); }
+var GN={d:['día','días','diario'], s:['semana','semanas','semanal'], m:['mes','meses','mensual']};
+function vCo2(){
+  var g=S.co2g, ms=months(), Y=yearOf(), ym=S.ym==='Y'?ms[ms.length-1]:S.ym, cols=[], keyOf, list;
+  if(g==='d'){
+    list=cargasDe(ym);
+    for(var i=1;i<=daysIn(ym);i++){ var f=ym+'-'+String(i).padStart(2,'0'); cols.push({k:f, t:String(i), s:DIA1[dow(f)]}); }
+    keyOf=function(c){ return c.f; };
+  } else if(g==='s'){
+    list=S.cargas.filter(function(c){ return c.f.slice(0,4)===Y; }); var seen={};
+    list.forEach(function(c){ seen[lunesDe(c.f)]=1; });
+    Object.keys(seen).sort().forEach(function(l){ cols.push({k:l, t:'S'+semanaNum(l), s:fDate(l)}); });
+    keyOf=function(c){ return lunesDe(c.f); };
+  } else {
+    list=S.cargas.filter(function(c){ return c.f.slice(0,4)===Y; });
+    ms.filter(function(m){ return m.slice(0,4)===Y; }).forEach(function(m){ cols.push({k:m, t:ymShort(m), s:''}); });
+    keyOf=function(c){ return c.f.slice(0,7); };
+  }
+  var fac=S.cfg.co2, M={}, colT={}, rowT={}, rowKm={}, tot=0, max=0, kmT=0;
+  list.forEach(function(c){ var k=keyOf(c), v=c.gal*fac, mk=c.ficha+'|'+k;
+    M[mk]=(M[mk]||0)+v; colT[k]=(colT[k]||0)+v; rowT[c.ficha]=(rowT[c.ficha]||0)+v; rowKm[c.ficha]=(rowKm[c.ficha]||0)+c.km; tot+=v; kmT+=c.km; });
+  Object.keys(M).forEach(function(k){ if(M[k]>max) max=M[k]; });
+  var fis=Object.keys(rowT).sort(function(a,b){ return rowT[b]-rowT[a]; });
+  var per=g==='d'?ymName(ym):'Año '+Y, top=fis[0], nCol=cols.filter(function(c){ return colT[c.k]>0; }).length;
+  var h='<section class="tiles">'+
+    tile('CO₂ · '+per, f1(tot/1000),'t', f0(tot)+' kg de '+plural(fis.length,'unidad','unidades'))+
+    tile('Promedio por '+GN[g][0], f0(nCol?tot/nCol:null),'kg', 'En '+f0(nCol)+' '+(nCol===1?GN[g][0]:GN[g][1])+' con cargas')+
+    tile('Unidad que más emite', top?esc(top):'—','', top?f0(rowT[top])+' kg · '+pct(rowT[top]/tot)+' del total':'')+
+    tile('CO₂ por km', f2(kmT?tot/kmT:null),'kg/km', 'De toda la flota en el periodo')+'</section>';
+  h+='<section class="card"><div class="sechead"><div><h2>CO₂ por unidad · '+GN[g][2]+' · '+per+'</h2><p class="sub">kg de CO₂ = galones cargados × '+f2(fac)+' (se cambia en Reglas y metas). Se cuenta el día de la carga de combustible. Más oscuro = más CO₂.'+
+    (g==='d'?(S.ym==='Y'?' Con el año completo se muestra el último mes.':' Para otro mes, cámbialo arriba.'):'')+'</p></div>'+
+    '<div class="seg tools" role="group" aria-label="Agrupar por">'+[['d','Diario'],['s','Semanal'],['m','Mensual']].map(function(x){ return '<button type="button" data-co2g="'+x[0]+'" aria-pressed="'+(g===x[0])+'">'+x[1]+'</button>'; }).join('')+'</div></div>';
+  if(!fis.length){ document.getElementById('vCo2').innerHTML=h+'<p class="empty-s">No hay cargas en este periodo.</p></section>'; return; }
+  function cellV(v){ return v>0?'<td class="v" style="--w:'+Math.round(8+52*v/max)+'%" title="'+f0(v)+' kg">'+f0(v)+'</td>':'<td class="v z">·</td>'; }
+  h+='<div class="scroll" style="margin-top:10px"><table class="co2"><thead><tr><th>Unidad</th>'+cols.map(function(c){ return '<th>'+c.t+(c.s?'<small>'+c.s+'</small>':'')+'</th>'; }).join('')+'<th class="tc">Total<small>kg</small></th><th>kg/km</th></tr></thead><tbody>';
+  fis.forEach(function(fi){ h+='<tr><td><b>'+esc(fi)+'</b></td>'+cols.map(function(c){ return cellV(M[fi+'|'+c.k]||0); }).join('')+'<td class="r tc"><b>'+f0(rowT[fi])+'</b></td><td class="r">'+f2(rowKm[fi]?rowT[fi]/rowKm[fi]:null)+'</td></tr>'; });
+  h+='<tr class="tot"><td>Flota</td>'+cols.map(function(c){ return '<td class="r">'+(colT[c.k]?f0(colT[c.k]):'·')+'</td>'; }).join('')+'<td class="r tc">'+f0(tot)+'</td><td class="r">'+f2(kmT?tot/kmT:null)+'</td></tr>';
+  h+='</tbody></table></div></section>';
+  document.getElementById('vCo2').innerHTML=h;
+}
+
 /* --- Reglas y metas --- */
 function renderEditor(){
   var c=S.cfg, h='<div class="sechead"><div><h2>Reglas y metas</h2><p class="sub">Se guardan en la base de datos para todos.</p></div><button type="button" class="quiet" id="cfgClose">Cerrar</button></div>';
@@ -585,6 +644,7 @@ document.getElementById('tabs').addEventListener('click',function(e){ var b=e.ta
 document.addEventListener('click',function(e){
   var t=e.target;
   if(t.id==='cfgClose'){ document.getElementById('editor').hidden=true; document.getElementById('cfgBtn').setAttribute('aria-expanded','false'); return; }
+  var cg=t.closest('[data-co2g]'); if(cg){ S.co2g=cg.dataset.co2g; render(); return; }
   var pt=t.closest('.pt'); if(pt){ S.ym=pt.dataset.ym; render(); return; }
   var so=t.closest('th[data-sort]'); if(so){ var key=so.dataset.sort, sv=S.view==='cho'?'choSort':'ficSort', cur=S[sv]; S[sv]=[key, cur[0]===key?-cur[1]:(key==='k'||key==='nom'?1:-1)]; render(); return; }
   var op=t.closest('tr[data-open]'); if(op){ var k=op.dataset.open; S.open[k]=!S.open[k]; render(); return; }
@@ -602,7 +662,7 @@ function renderViewOnly(){ var ed=document.getElementById('editor'), keep=ed.hid
 ['dragleave','drop'].forEach(function(ev){ document.addEventListener(ev,function(e){ e.preventDefault(); if(ev==='drop'||!e.relatedTarget) document.body.classList.remove('dragging'); }); });
 document.addEventListener('drop',function(e){ var f=e.dataTransfer&&e.dataTransfer.files[0]; if(f) loadFile(f); });
 
-try{ var ui=JSON.parse(localStorage.getItem(UIK)||'{}'); if(['res','fic','dia','cho'].indexOf(ui.view)>=0) S.view=ui.view; }catch(_){}
+try{ var ui=JSON.parse(localStorage.getItem(UIK)||'{}'); if(['res','fic','dia','cho','co2'].indexOf(ui.view)>=0) S.view=ui.view; if(['d','s','m'].indexOf(ui.co2g)>=0) S.co2g=ui.co2g; }catch(_){}
 pull();
 </script>
 </body>
