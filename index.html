@@ -180,19 +180,6 @@ input[type=text],input[type=number],input[type=search],input[type=date]{font:inh
 .metas td,.metas th{padding:5px 8px}
 .metas input{width:84px}
 
-/* Plan de acción */
-table.plan{min-width:1100px}
-.plan th,.plan td{padding:5px 5px}
-.plan input,.plan select,.plan textarea{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--axis);border-radius:4px;padding:5px 6px;width:100%}
-.plan textarea{min-height:34px;resize:vertical;min-width:240px}
-.plan input[type=date]{min-width:128px}
-.plan tr.venc td:first-child{box-shadow:inset 3px 0 0 var(--crit)}
-.plan tr.done td{opacity:.6}
-.plan .rm{border:0;background:none;color:var(--muted);padding:4px 8px;font-size:17px;line-height:1}
-.plan .rm:hover{color:var(--crit)}
-.stats{display:flex;flex-wrap:wrap;gap:8px 22px;color:var(--ink-2);font-size:13px}
-.stats b{color:var(--ink);font-weight:600;font-size:15px}
-
 .tabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--axis)}
 .tabs button{border:0;border-bottom:3px solid transparent;border-radius:0;background:none;padding:9px 14px 8px;color:var(--ink-2);font-weight:500;margin-bottom:-1px}
 .tabs button:hover{color:var(--ink)}
@@ -240,14 +227,12 @@ table.plan{min-width:1100px}
     <button type="button" role="tab" data-view="fic">Fichas</button>
     <button type="button" role="tab" data-view="dia">Día a día</button>
     <button type="button" role="tab" data-view="cho">Choferes</button>
-    <button type="button" role="tab" data-view="plan">Plan de acción</button>
   </nav>
 
   <div class="view" id="vRes" hidden></div>
   <div class="view" id="vFic" hidden></div>
   <div class="view" id="vDia" hidden></div>
   <div class="view" id="vCho" hidden></div>
-  <div class="view" id="vPlan" hidden></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -255,12 +240,11 @@ table.plan{min-width:1100px}
 var MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 var MES3=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 var DIA1=['D','L','M','X','J','V','S'];
-var ESTATUS=['Abierta','En proceso','Cerrada'];
 var CACHE='rendimiento-bvr.v1', UIK='rendimiento-bvr.ui';
 
 function defCfg(){ return {banda:5, co2:9.88, minG:0}; }
-/* S: lo que viene de la base (fichas, cargas, asign, acciones) + estado de la vista. */
-var S={fichas:{}, cargas:[], asign:{}, acciones:[], cfg:defCfg(), datos:null, ym:null, view:'res', ficSort:['extra',-1], choSort:['extra',-1], open:{}, sel:null, q:''};
+/* S: lo que viene de la base (fichas, cargas, asign) + estado de la vista. */
+var S={fichas:{}, cargas:[], asign:{}, cfg:defCfg(), datos:null, ym:null, view:'res', ficSort:['extra',-1], choSort:['extra',-1], open:{}, sel:null, q:''};
 
 /* ---------- Utilidades ---------- */
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -343,7 +327,6 @@ function applyState(d){
   S.cargas=(d.cargas||[]).map(mkCarga).sort(function(a,b){ return a.f<b.f?-1:a.f>b.f?1:a.ficha<b.ficha?-1:1; });
   S.asign={}; CHN={};
   (d.asign||[]).forEach(function(r){ var k=r[0]+'|'+r[1]; (S.asign[k]=S.asign[k]||[]).push({ruta:r[2], chofer:r[3]}); var n=norm(r[3]); if(n&&!CHN[n]) CHN[n]=title(r[3]); });
-  S.acciones=(d.acciones||[]).slice();
   var c=d.config||{}; S.cfg=Object.assign(defCfg(), c.ajustes||{}); S.datos=c.datos||null;
 }
 function saveCache(d){ try{ localStorage.setItem(CACHE, JSON.stringify(d)); }catch(_){} }
@@ -372,9 +355,6 @@ var cfgT=null;
 function saveCfg(){ clearTimeout(cfgT); cfgT=setTimeout(function(){ write('PUT','/api/config/ajustes',S.cfg).catch(function(){}); },600); }
 var metaT=null;
 function saveMetas(){ clearTimeout(metaT); metaT=setTimeout(function(){ write('POST','/api/fichas',{rows:Object.keys(S.fichas).map(function(k){ var f=S.fichas[k]; return {ficha:k, meta:f.meta, modelo:f.modelo, marca:f.marca}; })}).catch(function(){}); },700); }
-var accT={};
-function saveAcc(a){ clearTimeout(accT[a.id]); accT[a.id]=setTimeout(function(){ delete accT[a.id]; write('PUT','/api/acciones/'+a.id,a).catch(function(){}); },600); }
-
 /* ---------- Lectura del Excel ----------
    Hojas de mes (Enero…Diciembre): fila 1 = fecha de cada día (cada 6 columnas desde H),
    fila 2 = Inicial, Final, Galones, Co2, Recorrido, Rendimiento; desde la fila 3, una ficha por fila (A ficha, B meta, C modelo). */
@@ -422,7 +402,7 @@ function loadFile(file){
     if(x.error){ show('info',''); show('msg',esc(x.error)); return; }
     // Vista inmediata en este navegador (reemplaza el rango del archivo) y luego a la base.
     var d={fichas:x.fichas, cargas:S.cargas.filter(function(c){ return c.f<x.desde||c.f>x.hasta; }).map(function(c){ return [c.f,c.ficha,c.ini,c.fin,c.gal,c.km]; }).concat(x.cargas),
-      asign:[], acciones:S.acciones, config:{ajustes:S.cfg, datos:{archivo:x.archivo, cargado:new Date().toISOString()}}};
+      asign:[], config:{ajustes:S.cfg, datos:{archivo:x.archivo, cargado:new Date().toISOString()}}};
     Object.keys(S.asign).forEach(function(k){ var p=k.split('|'); if(x.aDesde&&p[0]>=x.aDesde&&p[0]<=x.aHasta) return; S.asign[k].forEach(function(a){ d.asign.push([p[0],p[1],a.ruta,a.chofer]); }); });
     d.asign=d.asign.concat(x.asign);
     Object.keys(S.fichas).forEach(function(k){ if(!x.fichas.some(function(f){ return f.ficha===k; })) d.fichas.push({ficha:k, meta:S.fichas[k].meta, modelo:S.fichas[k].modelo, marca:S.fichas[k].marca}); });
@@ -439,14 +419,14 @@ function render(){
   document.getElementById('empty').hidden=has;
   document.getElementById('tabs').hidden=!has;
   var sel=document.getElementById('monthSel'); sel.hidden=!has;
-  if(!has){ ['vRes','vFic','vDia','vCho','vPlan'].forEach(function(v){ document.getElementById(v).hidden=true; }); return; }
+  if(!has){ ['vRes','vFic','vDia','vCho'].forEach(function(v){ document.getElementById(v).hidden=true; }); return; }
   if(!S.ym||(S.ym!=='Y'&&ms.indexOf(S.ym)<0)) S.ym=ms[ms.length-1];
   sel.innerHTML=ms.slice().reverse().map(function(m){ return '<option value="'+m+'"'+(m===S.ym?' selected':'')+'>'+ymName(m)+'</option>'; }).join('')+'<option value="Y"'+(S.ym==='Y'?' selected':'')+'>Año '+yearOf()+' completo</option>';
   var dt=S.datos; document.getElementById('subtitle').textContent='Kilómetros por galón por camión, día y chofer, contra la meta de cada ficha.'+(dt&&dt.archivo?' Datos de "'+dt.archivo+'"'+(dt.cargado?', cargado el '+fDate(String(dt.cargado).slice(0,10))+'.':'.'):'');
   document.querySelectorAll('#tabs button').forEach(function(b){ b.setAttribute('aria-selected', b.dataset.view===S.view?'true':'false'); });
-  var map={res:'vRes', fic:'vFic', dia:'vDia', cho:'vCho', plan:'vPlan'};
+  var map={res:'vRes', fic:'vFic', dia:'vDia', cho:'vCho'};
   Object.keys(map).forEach(function(k){ document.getElementById(map[k]).hidden=k!==S.view; });
-  ({res:vRes, fic:vFic, dia:vDia, cho:vCho, plan:vPlan})[S.view]();
+  ({res:vRes, fic:vFic, dia:vDia, cho:vCho})[S.view]();
   if(!document.getElementById('editor').hidden) renderEditor();
   try{ localStorage.setItem(UIK, JSON.stringify({view:S.view})); }catch(_){}
 }
@@ -493,10 +473,8 @@ function vRes(){
   var byF=groupBy(list,'ficha'), fr=Object.keys(byF).map(function(k){ var x=agg(byF[k]); x.k=k; return x; }).filter(function(x){ return x.s!=='good'&&x.rend!=null; }).sort(function(a,b){ return b.extra-a.extra; });
   var rev=list.filter(revisar);
   var todo=fr.slice(0,6).map(function(x){ return '<li class="s-'+x.s+'"><i>'+(x.s==='warn'?'!':'✕')+'</i><div><strong>Ficha '+esc(x.k)+'</strong> · '+f1(x.rend)+' km/gal contra meta '+f1(x.meta)+
-    '<p>'+extraTxt(x.extra)+' en '+plural(x.n,'carga','cargas')+' · '+pct(x.bajoP)+' de sus cargas bajo meta</p></div><button type="button" class="mini-btn" data-newacc="'+esc(x.k)+'">Crear acción</button></li>'; });
+    '<p>'+extraTxt(x.extra)+' en '+plural(x.n,'carga','cargas')+' · '+pct(x.bajoP)+' de sus cargas bajo meta</p></div><span></span></li>'; });
   if(rev.length) todo.push('<li class="s-warn"><i>!</i><div><strong>'+plural(rev.length,'dato para revisar','datos para revisar')+'</strong><p>'+rev.slice(0,5).map(function(c){ return fDate(c.f)+' '+esc(c.ficha)+' ('+revisar(c).toLowerCase()+')'; }).join(' · ')+(rev.length>5?' …':'')+'</p></div><span></span></li>');
-  var abiertas=S.acciones.filter(function(x){ return x.estatus!=='Cerrada'; }), venc=abiertas.filter(function(x){ return x.compromiso&&x.compromiso<todayISO(); });
-  if(venc.length) todo.push('<li class="s-crit"><i>✕</i><div><strong>'+plural(venc.length,'acción vencida','acciones vencidas')+' en el plan</strong><p>'+venc.slice(0,3).map(function(x){ return esc(x.accion||'(sin texto)').slice(0,60); }).join(' · ')+'</p></div><button type="button" class="mini-btn" data-goto="plan">Ver plan</button></li>');
   h+='<section class="two"><div class="card"><div class="sechead"><div><h2>Qué atender</h2><p class="sub">Fichas bajo la meta, ordenadas por galones de más.</p></div></div>'+
     (todo.length?'<ul class="todo">'+todo.join('')+'</ul>':'<p class="empty-s">Todas las fichas están en meta este periodo.</p>')+'</div>';
   // Peores y mejores
@@ -554,8 +532,7 @@ function vDia(){
   if(c){ var ch=choferesDe(c), rv=revisar(c);
     h+='<div class="detail"><h2>Ficha '+esc(c.ficha)+' · '+fDate(c.f)+'</h2><div class="pills">'+
       '<span class="pill">Odómetro '+f0(c.ini)+' → '+f0(c.fin)+'</span><span class="pill">'+f0(c.km)+' km</span><span class="pill">'+f1(c.gal)+' gal</span><span class="pill">'+rs(c.rend,metaOf(c.ficha))+' km/gal · meta '+f1(metaOf(c.ficha))+'</span>'+(rv?'<span class="tag mid">'+rv+'</span>':'')+'</div>'+
-      '<p class="sub">'+(quien(c).length?quien(c).map(function(a){ return esc(a.ruta)+' · '+esc(title(a.chofer)); }).filter(function(v,i,a){ return a.indexOf(v)===i; }).join('<br>'):'La Base de datos choferes no tiene ruta ni chofer para esta ficha este día.')+'</p>'+
-      '<div><button type="button" class="mini-btn" data-newacc="'+esc(c.ficha)+'" data-chofer="'+esc(ch.length?CHN[ch[0]]:'')+'">Crear acción</button></div></div>'; }
+      '<p class="sub">'+(quien(c).length?quien(c).map(function(a){ return esc(a.ruta)+' · '+esc(title(a.chofer)); }).filter(function(v,i,a){ return a.indexOf(v)===i; }).join('<br>'):'La Base de datos choferes no tiene ruta ni chofer para esta ficha este día.')+'</p></div>'; }
   h+='</section>'+legend();
   document.getElementById('vDia').innerHTML=h;
 }
@@ -574,37 +551,11 @@ function vCho(){
   var h='<section class="card"><div class="sechead"><div><h2>Rendimiento por chofer · '+ymName(S.ym)+'</h2><p class="sub">Según la Base de datos choferes: cada carga cuenta para quien usó el camión ese día (si fueron varios, se reparte). '+
     pct(list.length?(list.length-sin)/list.length:null)+' de las cargas del periodo tienen chofer'+(sin?' ('+plural(sin,'carga','cargas')+' sin chofer)':'')+'.</p></div>'+
     '<div class="tools"><label class="vh" for="qCho">Buscar</label><input type="search" id="qCho" placeholder="Buscar chofer, ruta o ficha" value="'+esc(S.q)+'"></div></div>';
-  h+='<div class="scroll"><table><thead><tr>'+th('nom','Chofer',S.choSort)+'<th>Rutas · fichas</th>'+th('n','Cargas',S.choSort,'r')+th('km','Km',S.choSort,'r')+th('gal','Galones',S.choSort,'r')+th('rend','km/gal',S.choSort,'r')+th('cumpl','Cumpl.',S.choSort,'r')+th('extra','Gal. sobre meta',S.choSort,'r')+th('bajoP','Cargas bajo meta',S.choSort,'r')+'<th></th></tr></thead><tbody>'+
-    rows.map(function(x){ return '<tr><td><b>'+esc(x.nom)+'</b></td><td class="dim">'+esc(Object.keys(x.rutas).sort().join(', '))+' · '+esc(Object.keys(x.fichas).sort().join(', '))+'</td><td class="r">'+(Math.abs(x.n-Math.round(x.n))<1e-9?f0(x.n):f1(x.n))+'</td><td class="r">'+f0(x.km)+'</td><td class="r">'+f0(x.gal)+'</td><td class="r">'+rs(x.rend,x.meta)+'</td><td class="r">'+pct(x.cumpl)+'</td><td class="r">'+extraTxt(x.extra)+'</td><td class="r">'+pct(x.bajoP)+'</td><td><button type="button" class="mini-btn" data-newacc="" data-chofer="'+esc(x.nom)+'">Crear acción</button></td></tr>'; }).join('')+
+  h+='<div class="scroll"><table><thead><tr>'+th('nom','Chofer',S.choSort)+'<th>Rutas · fichas</th>'+th('n','Cargas',S.choSort,'r')+th('km','Km',S.choSort,'r')+th('gal','Galones',S.choSort,'r')+th('rend','km/gal',S.choSort,'r')+th('cumpl','Cumpl.',S.choSort,'r')+th('extra','Gal. sobre meta',S.choSort,'r')+th('bajoP','Cargas bajo meta',S.choSort,'r')+'</tr></thead><tbody>'+
+    rows.map(function(x){ return '<tr><td><b>'+esc(x.nom)+'</b></td><td class="dim">'+esc(Object.keys(x.rutas).sort().join(', '))+' · '+esc(Object.keys(x.fichas).sort().join(', '))+'</td><td class="r">'+(Math.abs(x.n-Math.round(x.n))<1e-9?f0(x.n):f1(x.n))+'</td><td class="r">'+f0(x.km)+'</td><td class="r">'+f0(x.gal)+'</td><td class="r">'+rs(x.rend,x.meta)+'</td><td class="r">'+pct(x.cumpl)+'</td><td class="r">'+extraTxt(x.extra)+'</td><td class="r">'+pct(x.bajoP)+'</td></tr>'; }).join('')+
     '</tbody></table></div>'+(rows.length?'':'<p class="empty-s">No hay choferes para este periodo en la Base de datos choferes.</p>')+'</section>'+legend();
   document.getElementById('vCho').innerHTML=h;
   var qi=document.getElementById('qCho'); if(qi&&vCho.focus){ qi.focus(); qi.setSelectionRange(qi.value.length,qi.value.length); vCho.focus=false; }
-}
-
-/* --- Plan de acción (Action Log) --- */
-function newId(){ return 'a'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
-function addAccion(ficha,chofer){
-  var a={id:newId(), fecha:todayISO(), autor:'', cluster:'Rendimiento', ficha:ficha||'', chofer:chofer||'', accion:'', resp:'', compromiso:'', termino:'', estatus:'Abierta'};
-  S.acciones.unshift(a); saveAcc(a); S.view='plan'; render();
-  var t=document.querySelector('#vPlan textarea'); if(t) t.focus();
-}
-function vPlan(){
-  var A=S.acciones.slice().sort(function(a,b){ var x=a.estatus==='Cerrada', y=b.estatus==='Cerrada'; if(x!==y) return x?1:-1; return (b.fecha||'')<(a.fecha||'')?-1:1; });
-  var hoy=todayISO(), ab=A.filter(function(a){ return a.estatus!=='Cerrada'; }), ve=ab.filter(function(a){ return a.compromiso&&a.compromiso<hoy; });
-  var h='<section class="card"><div class="sechead"><div><h2>Plan de acción</h2><p class="sub">Action Log de rendimiento. Cada cambio se guarda en la base de datos.</p></div><div class="tools"><button type="button" class="pri" data-newacc="">Agregar acción</button></div></div>';
-  h+='<div class="stats" style="margin:10px 0"><span><b>'+A.length+'</b> acciones</span><span><b>'+ab.length+'</b> abiertas</span><span><b style="color:'+(ve.length?'var(--crit)':'inherit')+'">'+ve.length+'</b> vencidas</span><span><b>'+(A.length-ab.length)+'</b> cerradas</span></div>';
-  var fOpts=Object.keys(S.fichas).sort();
-  h+='<div class="scroll"><table class="plan"><thead><tr><th>Fecha acción</th><th>Autor</th><th>Clúster</th><th>Ficha</th><th>Chofer</th><th>Acción</th><th>Responsable</th><th>Fecha compromiso</th><th>Fecha término</th><th>Estatus</th><th></th></tr></thead><tbody>'+
-    A.map(function(a){ var v=a.estatus!=='Cerrada'&&a.compromiso&&a.compromiso<hoy;
-      return '<tr data-id="'+a.id+'" class="'+(v?'venc':'')+(a.estatus==='Cerrada'?' done':'')+'">'+
-        '<td><input type="date" data-f="fecha" value="'+esc(a.fecha)+'"></td><td><input type="text" data-f="autor" value="'+esc(a.autor)+'"></td><td><input type="text" data-f="cluster" value="'+esc(a.cluster)+'"></td>'+
-        '<td><select data-f="ficha"><option value=""></option>'+fOpts.map(function(k){ return '<option'+(k===a.ficha?' selected':'')+'>'+esc(k)+'</option>'; }).join('')+'</select></td>'+
-        '<td><input type="text" data-f="chofer" value="'+esc(a.chofer)+'"></td><td><textarea data-f="accion" rows="1">'+esc(a.accion)+'</textarea></td><td><input type="text" data-f="resp" value="'+esc(a.resp)+'"></td>'+
-        '<td><input type="date" data-f="compromiso" value="'+esc(a.compromiso)+'"></td><td><input type="date" data-f="termino" value="'+esc(a.termino)+'"></td>'+
-        '<td><select data-f="estatus">'+ESTATUS.map(function(s){ return '<option'+(s===a.estatus?' selected':'')+'>'+s+'</option>'; }).join('')+'</select></td>'+
-        '<td><button type="button" class="rm" data-rm="'+a.id+'" aria-label="Borrar acción" title="Borrar">×</button></td></tr>'; }).join('')+'</tbody></table></div>'+
-    (A.length?'':'<p class="empty-s">Todavía no hay acciones. Usa "Agregar acción" o "Crear acción" desde una ficha o un chofer.</p>')+'</section>';
-  document.getElementById('vPlan').innerHTML=h;
 }
 
 /* --- Reglas y metas --- */
@@ -635,21 +586,14 @@ document.addEventListener('click',function(e){
   var t=e.target;
   if(t.id==='cfgClose'){ document.getElementById('editor').hidden=true; document.getElementById('cfgBtn').setAttribute('aria-expanded','false'); return; }
   var pt=t.closest('.pt'); if(pt){ S.ym=pt.dataset.ym; render(); return; }
-  var na=t.closest('[data-newacc]'); if(na){ addAccion(na.dataset.newacc, na.dataset.chofer||''); return; }
-  var go=t.closest('[data-goto]'); if(go){ S.view=go.dataset.goto; render(); return; }
   var so=t.closest('th[data-sort]'); if(so){ var key=so.dataset.sort, sv=S.view==='cho'?'choSort':'ficSort', cur=S[sv]; S[sv]=[key, cur[0]===key?-cur[1]:(key==='k'||key==='nom'?1:-1)]; render(); return; }
   var op=t.closest('tr[data-open]'); if(op){ var k=op.dataset.open; S.open[k]=!S.open[k]; render(); return; }
   var ce=t.closest('button[data-cel]'); if(ce){ S.sel=S.sel===ce.dataset.cel?null:ce.dataset.cel; render(); return; }
-  var rm=t.closest('[data-rm]'); if(rm){ var a=S.acciones.find(function(x){ return x.id===rm.dataset.rm; });
-    if(a&&confirm('¿Borrar esta acción del plan? '+(a.accion?'"'+a.accion.slice(0,80)+'"':''))){ S.acciones=S.acciones.filter(function(x){ return x!==a; }); clearTimeout(accT[a.id]); write('DELETE','/api/acciones/'+a.id).catch(function(){}); render(); } return; }
 });
 document.addEventListener('keydown',function(e){ var pt=e.target.closest&&e.target.closest('.pt'); if(pt&&(e.key==='Enter'||e.key===' ')){ e.preventDefault(); S.ym=pt.dataset.ym; render(); } });
 document.addEventListener('input',function(e){
   var t=e.target;
   if(t.id==='qCho'){ S.q=t.value; vCho.focus=true; vCho(); return; }
-  var tr=t.closest('#vPlan tr[data-id]'); if(tr&&t.dataset.f){ var a=S.acciones.find(function(x){ return x.id===tr.dataset.id; }); if(!a) return; a[t.dataset.f]=t.value;
-    if(t.dataset.f==='estatus'&&t.value==='Cerrada'&&!a.termino) a.termino=todayISO();
-    saveAcc(a); if(t.tagName==='SELECT'||t.type==='date') render(); return; }
   if(t.dataset.cfg){ var v=parseFloat(t.value); if(isFinite(v)&&v>=0){ S.cfg[t.dataset.cfg]=v; saveCfg(); render(); } return; }
   if(t.dataset.meta){ var v2=parseFloat(t.value), f=S.fichas[t.dataset.meta]; if(f&&isFinite(v2)&&v2>0){ f.meta=v2; saveMetas(); renderViewOnly(); } }
 });
@@ -658,7 +602,7 @@ function renderViewOnly(){ var ed=document.getElementById('editor'), keep=ed.hid
 ['dragleave','drop'].forEach(function(ev){ document.addEventListener(ev,function(e){ e.preventDefault(); if(ev==='drop'||!e.relatedTarget) document.body.classList.remove('dragging'); }); });
 document.addEventListener('drop',function(e){ var f=e.dataTransfer&&e.dataTransfer.files[0]; if(f) loadFile(f); });
 
-try{ var ui=JSON.parse(localStorage.getItem(UIK)||'{}'); if(ui.view) S.view=ui.view; }catch(_){}
+try{ var ui=JSON.parse(localStorage.getItem(UIK)||'{}'); if(['res','fic','dia','cho'].indexOf(ui.view)>=0) S.view=ui.view; }catch(_){}
 pull();
 </script>
 </body>
